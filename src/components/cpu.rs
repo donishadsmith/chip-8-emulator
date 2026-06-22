@@ -22,7 +22,6 @@ impl ProgramCounter {
     }
 
     pub fn skip(&mut self, step: u16) {
-        self.increment();
         self.address += 2 * step;
     }
 
@@ -35,19 +34,17 @@ impl ProgramCounter {
     }
 }
 
-pub struct CPU {
+struct ControlUnit {
+    instruction_register: Option<u16>, // Current instruction
     program_counter: ProgramCounter,
-    registers: [u8; 16], // Each register holds 1 byte, u8 -> (2^8) - 1 = 0 to 255, registers are V0 to VF/ 0 -> 15
-    instruction_register: u16, // Current instruction
     stack_pointer: Option<usize>, // point to top of stack
 }
 
-impl CPU {
+impl ControlUnit {
     pub fn start() -> Self {
         Self {
+            instruction_register: None,
             program_counter: ProgramCounter::start(),
-            registers: [0; 16],
-            instruction_register: STARTING_ADDRESS,
             stack_pointer: None,
         }
     }
@@ -84,15 +81,35 @@ impl CPU {
         self.stack_pointer = index;
     }
 
-    pub fn cycle(&mut self) {
-        //self.fetch();
-        //self.decode();
+    pub fn cycle(&mut self, ram: &RAM) {
+        self.fetch(ram);
+        self.decode();
         //self.execute();
     }
 
-    pub fn fetch() {}
+    pub fn fetch(&mut self, ram: &RAM) {
+        let pc = self.program_counter.address as usize;
+        let opcode = (ram.code_segment[pc] as u16) << 8 | (ram.code_segment[pc + 1] as u16);
+        self.instruction_register = Some(opcode);
 
-    pub fn decode() {}
+        self.program_counter.increment();
+    }
 
-    pub fn execute() {}
+    pub fn decode(&self) {}
+
+    pub fn execute(&self) {}
+}
+
+pub struct CPU {
+    registers: [u8; 16], // Each register holds 1 byte, u8 -> (2^8) - 1 = 0 to 255, registers are V0 to VF/ 0 -> 15
+    control_unit: ControlUnit,
+}
+
+impl CPU {
+    pub fn start() -> Self {
+        Self {
+            registers: [0; 16],
+            control_unit: ControlUnit::start(),
+        }
+    }
 }
