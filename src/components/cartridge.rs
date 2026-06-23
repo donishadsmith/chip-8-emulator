@@ -2,17 +2,24 @@
 pub struct Cartridge {
     pub buffer: [u8; 3584], // Max 4096 bytes of RAM in VM, first 512 bytes is for font + interpreter, pad with 0
     pub n_bytes: usize,
+    pub variant: String, // Will need a heap allocated string since &str will be outlived
 }
 
 impl Cartridge {
     pub fn load() -> Result<Self, std::io::Error> {
-        let rom_path = Self::terminal_reader()?;
+        let (rom_path, variant) = Self::terminal_reader()?;
 
         // Only accept the standard extension
         if !rom_path.ends_with(".ch8") {
             let ext_msg = format!("ROM does not end in .ch8 extension: {rom_path}");
 
             return Err(Self::error_message(ext_msg));
+        }
+
+        if variant != "CHIP-8" && variant != "CHIP-48" {
+            let variant_msg = format!("Only CHIP-8 and CHIP-48 supported not {variant}.");
+
+            return Err(Self::error_message(variant_msg));
         }
 
         let heap_buffer = std::fs::read(rom_path)?;
@@ -28,16 +35,24 @@ impl Cartridge {
         Ok(Self {
             buffer: Self::to_stack(&heap_buffer),
             n_bytes: heap_buffer.len(),
+            variant,
         })
     }
 
-    fn terminal_reader() -> Result<String, std::io::Error> {
+    fn terminal_reader() -> Result<(String, String), std::io::Error> {
         println!("Input path to ROM:");
 
         let mut filename = String::new();
         std::io::stdin().read_line(&mut filename)?;
 
-        Ok(filename.trim().to_string())
+        println!("chip8 variant (CHIP-8 or CHIP-48):");
+        let mut variant = String::new();
+        std::io::stdin().read_line(&mut variant)?;
+
+        Ok((
+            filename.trim().to_string(),
+            variant.trim().to_string().to_uppercase(),
+        ))
     }
 
     fn to_stack(heap_buffer: &Vec<u8>) -> [u8; 3584] {
