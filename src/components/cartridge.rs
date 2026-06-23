@@ -1,8 +1,7 @@
 // Each instruction has 4 hexedecimals, each 4 bits = 2 bytes
 pub struct Cartridge {
     pub buffer: [u8; 3584], // Max 4096 bytes of RAM in VM, first 512 bytes is for font + interpreter, pad with 0
-    pub n_bytes: usize,
-    pub variant: String, // Will need a heap allocated string since &str will be outlived
+    pub variant: String,    // Will need a heap allocated string since &str will be outlived
 }
 
 impl Cartridge {
@@ -34,7 +33,6 @@ impl Cartridge {
 
         Ok(Self {
             buffer: Self::to_stack(&heap_buffer),
-            n_bytes: heap_buffer.len(),
             variant,
         })
     }

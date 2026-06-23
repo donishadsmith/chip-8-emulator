@@ -1,6 +1,9 @@
 use macroquad::prelude::*;
 
-use crate::{components::ram::RAM, utils::key_event};
+use crate::{
+    components::{display::Display, ram::RAM},
+    utils::{is_chip8_key_down, key_event_pressed_only},
+};
 
 pub const STARTING_MEMORY_ADDRESS: usize = 0x000;
 pub const STARTING_ROM_ADDRESS: u16 = 0x200;
@@ -19,6 +22,10 @@ impl ProgramCounter {
 
     pub fn increment(&mut self) {
         self.address += 2 as u16;
+    }
+
+    pub fn decrement(&mut self) {
+        self.address -= 2 as u16;
     }
 
     pub fn jump(&mut self, address: u16) {
@@ -94,9 +101,10 @@ impl ControlUnit {
         registers: &mut [u8; 16],
         delay_timer: &mut u8,
         sound_timer: &mut u8,
+        display: &mut Display,
     ) {
         self.fetch(ram);
-        let nibbles = self.decode(ram);
+        let nibbles = self.decode();
         self.execute(
             nibbles,
             variant,
@@ -105,6 +113,7 @@ impl ControlUnit {
             registers,
             delay_timer,
             sound_timer,
+            display,
         );
     }
 
@@ -116,7 +125,7 @@ impl ControlUnit {
         self.program_counter.increment();
     }
 
-    pub fn decode(&self, ram: &RAM) -> Option<[u8; 4]> {
+    pub fn decode(&self) -> Option<[u8; 4]> {
         if let Some(opcode) = self.instruction_register {
             Some(self.separate_opcode(opcode))
         } else {
@@ -125,6 +134,7 @@ impl ControlUnit {
     }
 
     // https://chip8.gulrak.net/ - The classic CHIP-8 for the COSMAC VIP by Joseph Weisbecker, 1977
+    // and CHIP-48 - The initial CHIP-8 port to the HP-48SX calculator by Andreas Gustafsson, 1990
     pub fn execute(
         &mut self,
         nibbles: Option<[u8; 4]>,
@@ -134,66 +144,69 @@ impl ControlUnit {
         registers: &mut [u8; 16],
         delay_timer: &mut u8,
         sound_timer: &mut u8,
+        display: &mut Display,
     ) {
         if let Some(nibbles) = nibbles {
-            let key = key_event();
             let x = nibbles[1] as usize;
             let y = nibbles[2] as usize;
-            let nn = self.combine_bits(&nibbles[2..]) as u8;
-            let nnn = self.combine_bits(&nibbles[1..]) as u8;
+
+            let opcode = self.instruction_register.unwrap();
+            let nnn = opcode & 0x0FFF;
+            let nn = (opcode & 0x00FF) as u8;
+            let n = (opcode & 0x000F) as u8;
 
             match nibbles {
-                [0x0, 0x0, 0xE, 0x0] => self.op_0x00e0(),
-                [0x0, 0x0, 0xE, 0xE] => {}
-                [0x0, _, _, _] => {}
-                [0x1, _, _, _] => {}
-                [0x2, _, _, _] => {}
+                [0x0, 0x0, 0xE, 0x0] => self.op_0x00e0(display),
+                [0x0, 0x0, 0xE, 0xE] => self.op_0x00ee(ram),
+                [0x0, _, _, _] => {} // ignore
+                [0x1, _, _, _] => self.op_0x1nnn(nnn),
+                [0x2, _, _, _] => self.op_0x2nnn(nnn, ram),
                 [0x3, _, _, _] | [0x4, _, _, _] => {
                     if nibbles[0] == 0x3 {
-                        self.op_0x3xnn(registers, x, nn);
+                        self.op_0x3xnn(x, nn, registers);
                     } else {
-                        self.op_0x3xnn(registers, x, nn);
+                        self.op_0x4xnn(x, nn, registers);
                     }
                 }
-                [0x5, _, _, 0x0] => {}
+                [0x5, _, _, 0x0] => self.op_0x5xy0(x, y, registers),
                 [0x6, _, _, _] | [0x7, _, _, _] => {
                     if nibbles[0] == 0x6 {
-                        self.op_0x6xnn(registers, x, nn);
+                        self.op_0x6xnn(x, nn, registers);
                     } else {
-                        self.op_0x7xnn(registers, x, nn)
+                        self.op_0x7xnn(x, nn, registers);
                     }
                 }
-                [0x8, _, _, 0x0] => {}
-                [0x8, _, _, 0x1] => {}
-                [0x8, _, _, 0x2] => {}
-                [0x8, _, _, 0x3] => {}
-                [0x8, _, _, 0x4] => {}
-                [0x8, _, _, 0x5] => {}
-                [0x8, _, _, 0x6] => {}
-                [0x8, _, _, 0x7] => {}
-                [0x8, _, _, 0xE] => {}
-                [0x9, _, _, 0x0] => {}
-                [0xA, _, _, _] => {}
+                [0x8, _, _, 0x0] => self.op_0x8xy0(x, y, registers),
+                [0x8, _, _, 0x1] => self.op_0x8xy1(x, y, registers),
+                [0x8, _, _, 0x2] => self.op_0x8xy2(x, y, registers),
+                [0x8, _, _, 0x3] => self.op_0x8xy3(x, y, registers),
+                [0x8, _, _, 0x4] => self.op_0x8xy4(x, y, registers),
+                [0x8, _, _, 0x5] => self.op_0x8xy5(x, y, registers),
+                [0x8, _, _, 0x6] => self.op_0x8xy6(x, y, registers),
+                [0x8, _, _, 0x7] => self.op_0x8xy7(x, y, registers),
+                [0x8, _, _, 0xE] => self.op_0x8xye(x, y, registers),
+                [0x9, _, _, 0x0] => self.op_0x9xy0(x, y, registers),
+                [0xA, _, _, _] => self.op_0xannn(nnn, index_register),
                 [0xB, _, _, _] => {
                     if variant == "CHIP-8" {
-                        self.op_0xbnnn(registers, nnn);
+                        self.op_0xbnnn(nnn, registers);
                     } else {
-                        self.op_0xbxnn(registers, x, nn);
+                        self.op_0xbxnn(x, nn, registers);
                     }
                 }
-                [0xC, _, _, _] => {}
-                [0xD, _, _, _] => {}
-                [0xE, _, 0x9, 0xE] => {}
-                [0xE, _, 0xA, 0x1] => {}
-                [0xF, _, 0x0, 0x7] => {}
-                [0xF, _, 0x0, 0xA] => {}
-                [0xF, _, 0x1, 0x5] => {}
-                [0xF, _, 0x1, 0x8] => {}
-                [0xF, _, 0x1, 0xE] => {}
-                [0xF, _, 0x2, 0x9] => {}
-                [0xF, _, 0x3, 0x3] => {}
-                [0xF, _, 0x5, 0x5] => {}
-                [0xF, _, 0x6, 0x5] => {}
+                [0xC, _, _, _] => self.op_0xcxnn(x, nn, registers),
+                [0xD, _, _, _] => self.op_dxyn(x, y, n, registers, ram, index_register, display),
+                [0xE, _, 0x9, 0xE] => self.op_0xex9e(x, registers),
+                [0xE, _, 0xA, 0x1] => self.op_0xexa1(x, registers),
+                [0xF, _, 0x0, 0x7] => self.op_0xfx07(x, delay_timer, registers),
+                [0xF, _, 0x0, 0xA] => self.op_0xfx0a(x, registers),
+                [0xF, _, 0x1, 0x5] => self.op_0xfx15(x, delay_timer, registers),
+                [0xF, _, 0x1, 0x8] => self.op_0xfx18(x, sound_timer, registers),
+                [0xF, _, 0x1, 0xE] => self.op_0xfx1e(x, index_register, registers),
+                [0xF, _, 0x2, 0x9] => self.op_0xfx29(x, index_register, registers),
+                [0xF, _, 0x3, 0x3] => self.op_0xfx33(x, index_register, registers, ram),
+                [0xF, _, 0x5, 0x5] => self.op_0xfx55(x, index_register, registers, ram),
+                [0xF, _, 0x6, 0x5] => self.op_0xfx65(x, index_register, registers, ram),
                 _ => {}
             }
         }
@@ -208,29 +221,29 @@ impl ControlUnit {
         ]
     }
 
-    fn combine_bits(&self, slice: &[u8]) -> u16 {
-        slice.iter().copied().reduce(|a, b| a | b).unwrap() as u16
+    fn op_0x00ee(&mut self, ram: &RAM) {
+        self.pop(ram);
     }
 
-    fn op_0x00e0(&self) {
-        clear_background(BLACK);
+    fn op_0x00e0(&self, display: &mut Display) {
+        display.clear();
     }
 
-    fn op_0x1nnn(&mut self, address: u16) {
-        self.program_counter.jump(address);
+    fn op_0x1nnn(&mut self, nnn: u16) {
+        self.program_counter.jump(nnn as u16);
     }
 
-    fn op_0x2nnn(&mut self, address: u16, ram: &mut RAM) {
-        self.push(address, ram);
+    fn op_0x2nnn(&mut self, nnn: u16, ram: &mut RAM) {
+        self.push(nnn as u16, ram);
     }
 
-    fn op_0x3xnn(&mut self, registers: &[u8; 16], x: usize, nn: u8) {
+    fn op_0x3xnn(&mut self, x: usize, nn: u8, registers: &[u8; 16]) {
         if registers[x] == nn {
             self.program_counter.skip(1);
         }
     }
 
-    fn op_0x4xnn(&mut self, registers: &[u8; 16], x: usize, nn: u8) {
+    fn op_0x4xnn(&mut self, x: usize, nn: u8, registers: &[u8; 16]) {
         if registers[x] != nn {
             self.program_counter.skip(1);
         }
@@ -242,32 +255,191 @@ impl ControlUnit {
         }
     }
 
-    fn op_0x6xnn(&mut self, registers: &mut [u8; 16], x: usize, nn: u8) {
+    fn op_0x6xnn(&self, x: usize, nn: u8, registers: &mut [u8; 16]) {
         registers[x] = nn;
     }
 
-    fn op_0x7xnn(&mut self, registers: &mut [u8; 16], x: usize, nn: u8) {
-        registers[x] += nn;
+    fn op_0x7xnn(&self, x: usize, nn: u8, registers: &mut [u8; 16]) {
+        registers[x] = registers[x].wrapping_add(nn);
     }
 
-    fn op_0xbnnn(&mut self, registers: &mut [u8; 16], nnn: u8) {
+    fn op_0x8xy0(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        registers[x] = registers[y];
+    }
+
+    fn op_0x8xy1(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        // bitwise or; 0,0 = 0; 0,1 | 1,0 = 1; 1,1 = 1
+        registers[x] = registers[x] | registers[y];
+    }
+
+    fn op_0x8xy2(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        // bitwise and; 0,0 = 0; 0,1 | 1,0 = 0; 1,1 = 1
+        registers[x] = registers[x] & registers[y];
+    }
+
+    fn op_0x8xy3(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        // bitwise xor; 0,0 = 0; 0,1 | 1,0 = 1; 1,1 = 0
+        registers[x] = registers[x] ^ registers[y];
+    }
+
+    fn op_0x8xy4(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        let (result, overflowed) = registers[x].overflowing_add(registers[y]);
+        registers[x] = result;
+
+        registers[0xF] = if overflowed { 1 } else { 0 };
+    }
+
+    fn op_0x8xy5(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        let (result, underflowed) = registers[x].overflowing_sub(registers[y]);
+        registers[x] = result;
+
+        registers[0xF] = if underflowed { 0 } else { 1 };
+    }
+
+    fn op_0x8xy6(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        let dropped_bit = registers[y] & 1;
+        registers[x] = registers[y] >> 1;
+        registers[0xF] = dropped_bit;
+    }
+
+    fn op_0x8xy7(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        let (result, underflowed) = registers[y].overflowing_sub(registers[x]);
+        registers[x] = result;
+
+        registers[0xF] = if underflowed { 0 } else { 1 };
+    }
+
+    fn op_0x8xye(&self, x: usize, y: usize, registers: &mut [u8; 16]) {
+        //let dropped_bit = registers[y] & 128;
+        //registers[0xF] = if dropped_bit == 128 {1} else {0};
+        let dropped_bit = (registers[y] >> 7) & 1;
+        registers[x] = registers[y] << 1;
+
+        registers[0xF] = dropped_bit;
+    }
+
+    fn op_0x9xy0(&mut self, x: usize, y: usize, registers: &[u8; 16]) {
+        if registers[x] != registers[y] {
+            self.program_counter.skip(1);
+        }
+    }
+
+    fn op_0xannn(&self, nnn: u16, index_register: &mut usize) {
+        *index_register = nnn as usize;
+    }
+
+    fn op_0xbnnn(&mut self, nnn: u16, registers: &[u8; 16]) {
         self.program_counter.jump(registers[0] as u16 + nnn as u16);
     }
 
-    fn op_0xbxnn(&mut self, registers: &mut [u8; 16], x: usize, nn: u8) {
+    fn op_0xbxnn(&mut self, x: usize, nn: u8, registers: &[u8; 16]) {
         self.program_counter.jump(registers[x] as u16 + nn as u16);
     }
 
-    fn op_0xfx07(&mut self, registers: &mut [u8; 16], x: usize, delay_timer: &u8) {
+    fn op_0xcxnn(&self, x: usize, nn: u8, registers: &mut [u8; 16]) {
+        let random_byte = (rand::rand() % 256) as u8;
+
+        registers[x] = random_byte & nn;
+    }
+
+    fn op_dxyn(
+        &mut self,
+        x: usize,
+        y: usize,
+        n: u8,
+        registers: &mut [u8; 16],
+        ram: &RAM,
+        index_register: &usize,
+        display: &mut Display,
+    ) {
+        registers[0xF] = 0;
+        for row in 0..(n as usize) {
+            let sprite_byte = ram.code_segment[*index_register + row];
+            let pixel_y = (registers[y] as usize % display.height) + row;
+
+            if pixel_y >= display.height {
+                break;
+            }
+
+            for col in 0..8 {
+                let pixel_x = (registers[x] as usize % display.width) + col;
+
+                if pixel_x >= display.width {
+                    break;
+                }
+
+                let pixel_on = (sprite_byte >> (7 - col)) & 1 == 1;
+
+                if pixel_on {
+                    if display.panel[pixel_y][pixel_x] {
+                        registers[0xF] = 1;
+                        display.panel[pixel_y][pixel_x] = false;
+                    } else {
+                        display.panel[pixel_y][pixel_x] = true;
+                    }
+                }
+            }
+        }
+    }
+
+    fn op_0xex9e(&mut self, x: usize, registers: &[u8; 16]) {
+        if is_chip8_key_down(registers[x] & 0xF) {
+            self.program_counter.skip(1);
+        }
+    }
+
+    fn op_0xexa1(&mut self, x: usize, registers: &[u8; 16]) {
+        if !is_chip8_key_down(registers[x] & 0xF) {
+            self.program_counter.skip(1);
+        }
+    }
+
+    fn op_0xfx0a(&mut self, x: usize, registers: &mut [u8; 16]) {
+        if let Some(key) = key_event_pressed_only() {
+            registers[x] = key as u8;
+        } else {
+            self.program_counter.decrement();
+        }
+    }
+
+    fn op_0xfx07(&self, x: usize, delay_timer: &u8, registers: &mut [u8; 16]) {
         registers[x] = *delay_timer;
     }
 
-    fn op_0xfx15(&mut self, registers: &mut [u8; 16], x: usize, delay_timer: &mut u8) {
+    fn op_0xfx15(&self, x: usize, delay_timer: &mut u8, registers: &[u8; 16]) {
         *delay_timer = registers[x];
     }
 
-    fn op_0xfx18(&mut self, registers: &mut [u8; 16], x: usize, sound_timer: &mut u8) {
+    fn op_0xfx18(&self, x: usize, sound_timer: &mut u8, registers: &[u8; 16]) {
         *sound_timer = registers[x];
+    }
+
+    fn op_0xfx1e(&self, x: usize, index_register: &mut usize, registers: &[u8; 16]) {
+        *index_register += registers[x] as usize;
+    }
+
+    fn op_0xfx29(&self, x: usize, index_register: &mut usize, registers: &[u8; 16]) {
+        *index_register = (registers[x] & 0x0F) as usize * 5;
+    }
+
+    fn op_0xfx33(&self, x: usize, index_register: &usize, registers: &[u8; 16], ram: &mut RAM) {
+        ram.code_segment[*index_register] = registers[x] / 100;
+        ram.code_segment[*index_register + 1] = (registers[x] / 10) % 10;
+        ram.code_segment[*index_register + 2] = registers[x] % 10;
+    }
+
+    fn op_0xfx55(&self, x: usize, index_register: &mut usize, registers: &[u8; 16], ram: &mut RAM) {
+        for index in 0..=x {
+            ram.code_segment[*index_register] = registers[index];
+            *index_register += 1;
+        }
+    }
+
+    fn op_0xfx65(&self, x: usize, index_register: &mut usize, registers: &mut [u8; 16], ram: &RAM) {
+        for index in 0..=x {
+            registers[index] = ram.code_segment[*index_register];
+            *index_register += 1;
+        }
     }
 }
 

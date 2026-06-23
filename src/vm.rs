@@ -2,18 +2,16 @@ use crate::{
     components::{
         cartridge::Cartridge,
         cpu::{CPU, STARTING_ROM_ADDRESS},
+        display::Display,
         ram::RAM,
     },
     fontset::FONTSET,
 };
 
-const WIDTH: usize = 64;
-const HEIGHT: usize = 32;
-
 pub struct VirtualMachine<'a> {
     pub cpu: CPU,
     pub ram: RAM,
-    pub screen: [bool; WIDTH * HEIGHT],
+    pub display: Display,
     pub delay_timer: u8,
     pub sound_timer: u8,
     pub variant: &'a str,
@@ -24,7 +22,7 @@ impl<'a> VirtualMachine<'a> {
         Self {
             cpu: CPU::start(),
             ram: RAM::start(),
-            screen: [false; WIDTH * HEIGHT],
+            display: Display::on(),
             delay_timer: 0,
             sound_timer: 0,
             variant: variant,
@@ -46,14 +44,35 @@ impl<'a> VirtualMachine<'a> {
         }
     }
 
+    //https://www.reddit.com/r/EmuDev/comments/1ev3ool/chip8_instructions_per_second/
+    const INSTRUCTIONS_PER_FRAME: u8 = 10;
     pub fn process(&mut self) {
-        self.cpu.control_unit.cycle(
-            self.variant,
-            &mut self.ram,
-            &mut self.cpu.index_register,
-            &mut self.cpu.registers,
-            &mut self.delay_timer,
-            &mut self.sound_timer,
-        );
+        for _ in 0..Self::INSTRUCTIONS_PER_FRAME {
+            self.cpu.control_unit.cycle(
+                self.variant,
+                &mut self.ram,
+                &mut self.cpu.index_register,
+                &mut self.cpu.registers,
+                &mut self.delay_timer,
+                &mut self.sound_timer,
+                &mut self.display,
+            );
+        }
     }
+
+    pub fn update_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            if self.sound_timer == 1 {
+                self.beep();
+            }
+            self.sound_timer -= 1;
+        }
+    }
+
+    // Todo: to implement sound in the future
+    pub fn beep(&self) {}
 }
