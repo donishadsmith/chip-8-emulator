@@ -28,15 +28,16 @@ jobs:
             ext: ''
     steps:
       - uses: actions/checkout@v6
-      - name: Build release
-        run: cargo build --release
 
       - name: Install Libraries (Ubuntu)
-        if: matrix.runner == "ubuntu-latest"
+        if: matrix.runner == 'ubuntu-latest'
         run: |
           sudo apt update
           sudo apt install libwayland-dev
-          
+
+      - name: Build release
+        run: cargo build --release
+
       - name: Rename binary (Unix)
         if: matrix.runner != 'windows-latest'
         run: mv target/release/chip8 target/release/chip8-${{ matrix.target }}
