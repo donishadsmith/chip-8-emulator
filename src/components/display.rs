@@ -38,6 +38,6 @@ impl Display {
     }
 
     pub fn clear(&mut self) {
-        self.panel = [[false; 64]; 32];
+        self.panel = [[false; WIDTH]; HEIGHT];
     }
 }
