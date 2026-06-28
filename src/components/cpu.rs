@@ -15,30 +15,30 @@ pub struct ProgramCounter {
 }
 
 impl ProgramCounter {
-    pub fn start() -> Self {
+    fn start() -> Self {
         Self {
             address: STARTING_ROM_ADDRESS,
         }
     }
 
-    pub fn increment(&mut self) {
+    fn increment(&mut self) {
         self.address += 2 as u16;
     }
 
-    pub fn decrement(&mut self) {
+    fn decrement(&mut self) {
         self.address -= 2 as u16;
     }
 
-    pub fn jump(&mut self, address: u16) {
+    fn jump(&mut self, address: u16) {
         self.address = address;
     }
 
-    pub fn skip(&mut self, step: u16) {
+    fn skip(&mut self, step: u16) {
         self.address += 2 * step;
     }
 
     // Remember to jump back to return address
-    pub fn call(&mut self, address: u16) -> u16 {
+    fn call(&mut self, address: u16) -> u16 {
         let return_address = self.address;
         self.address = address;
 
@@ -54,7 +54,7 @@ pub struct ControlUnit {
 }
 
 impl ControlUnit {
-    pub fn start() -> Self {
+    fn start() -> Self {
         Self {
             instruction_register: None,
             program_counter: ProgramCounter::start(),
@@ -62,7 +62,7 @@ impl ControlUnit {
         }
     }
 
-    pub fn push(&mut self, address: u16, bus: &mut Bus) {
+    fn push(&mut self, address: u16, bus: &mut Bus) {
         let return_address = self.program_counter.call(address);
 
         let index = match self.stack_pointer {
@@ -81,7 +81,7 @@ impl ControlUnit {
         self.stack_pointer = Some(index);
     }
 
-    pub fn pop(&mut self, bus: &Bus) {
+    fn pop(&mut self, bus: &Bus) {
         let return_address = bus.ram.stack[self.stack_pointer.unwrap()];
         self.program_counter.jump(return_address);
 
@@ -116,7 +116,7 @@ impl ControlUnit {
         );
     }
 
-    pub fn fetch(&mut self, bus: &Bus) {
+    fn fetch(&mut self, bus: &Bus) {
         let pc = self.program_counter.address as usize;
         let opcode = (bus.read(pc) as u16) << 8 | (bus.read(pc + 1) as u16);
         self.instruction_register = Some(opcode);
@@ -124,7 +124,7 @@ impl ControlUnit {
         self.program_counter.increment();
     }
 
-    pub fn decode(&self) -> Option<[u8; 4]> {
+    fn decode(&self) -> Option<[u8; 4]> {
         if let Some(opcode) = self.instruction_register {
             Some(self.separate_opcode(opcode))
         } else {
@@ -134,7 +134,7 @@ impl ControlUnit {
 
     // https://chip8.gulrak.net/ - The classic CHIP-8 for the COSMAC VIP by Joseph Weisbecker, 1977
     // and CHIP-48 - The initial CHIP-8 port to the HP-48SX calculator by Andreas Gustafsson, 1990
-    pub fn execute(
+    fn execute(
         &mut self,
         nibbles: Option<[u8; 4]>,
         variant: &Variant,
